@@ -1,0 +1,475 @@
+---
+title: "Mushroom edibility"
+author: "Marc Vilella Muñoz"
+date: "08/05/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+We will investigate if the features of mushrooms, such as the shape, the colour, or the height, influence whether they are edible or poisonous. Therefore, if somehow, we can predict accurately the edibility with general features which can be seen easily.
+
+During this report, we perform different random forests trying to improve the accuracy as well as knowing which features are more important to infer the edibility.
+
+Firstly, we must load the libraries needed and read the CSV file with the mushroom data obtained from Minerva and we show the first 5 rows.
+
+```{r libraries, warning = FALSE, message = FALSE}
+library(ggplot2)
+library(tidyverse)
+library(caret)
+library(knitr)
+require(gridExtra)
+library(dplyr)
+library(ggpubr)
+library(reshape2)
+library(randomForest)
+library(dagR)
+```
+
+```{r mushrooms}
+mushrooms = read_csv("mushrooms.csv")
+
+mushrooms[1:5, ] %>%
+  kable(caption = "First five rows of Mushrooms data")
+```
+
+The data consist of 6 categorical attributes with different values; therefore, we will find the different values for each attribute. As the function **read_csv** automatically sets categorical variables as *characters*, first, we need to convert them to *factors* what is needed for running the random forest.
+
+```{r}
+# Convert to factors
+mushrooms[sapply(mushrooms, is.character)] = 
+  lapply(mushrooms[sapply(mushrooms, is.character)], as.factor)
+sapply(mushrooms, levels)
+
+# Number of rows
+nrow(mushrooms)
+```
+
+The data consists of 8124 records with 6 attributes related to the mushroom:
+
+-	Edible: identifies whether it is *Edible* or *Poisonous*.
+-	CapShape: the shape of the cap with the following possible values *Bell*, *Conical*, *Convex*, *Flat*, *Knobbed* and *Sunken*.
+-	CapSurface: type of surface of the cap which can have four different values, *Fibrous*, *Grooves*, *Scaly*, and *Smooth*.
+-	CapColor: color of the cap with ten possibilities such as *Brown*, *Buff*, *Cinnamon* and *Gray*.
+-	Odor: identifies the smell between nine different types such as *Almond*, *Anise*, *Creosote*, and *Fishy*.
+-	Height: identifies whether it is *Short* or *Tall*.
+
+We also check if the data contain any missing value and do research if the data is right.
+
+```{r}
+sum(apply(mushrooms,2,is.nan))
+```
+
+As we can see, there are no missing values. Nonetheless, an additional attribute referencing the name of the mushroom would be useful to detect duplicated records although it will not be used to predict as it is not an easy knowledge.
+Additionally, we show a plot for each possible input variable for guessing the edibility to provide an overview of the data. Using the colours green for Edible and yellow for Poisonous, we show the proportion of edibility for each possible type of each variable.
+
+
+```{r warning = FALSE, message = FALSE}
+i = 1
+df = data.frame(
+  Attribute = vector(length = 31),
+  Feature = vector(length = 31),
+  Edible = vector(length = 31),
+  Poisonous = vector(length = 31)
+)
+
+for (lev in levels(mushrooms$CapShape)){
+  mushrooms_filterd = mushrooms %>% filter(CapShape == lev)
+  df$Attribute[i] = "CapShape"
+  df$Feature[i] = lev
+  df$Edible[i] = sum(mushrooms_filterd$Edible == "Edible")
+  df$Poisonous[i] = nrow(mushrooms_filterd) - df$Edible[i]
+  i = i + 1
+}
+for (lev in levels(mushrooms$CapSurface)){
+  mushrooms_filterd = mushrooms %>% filter(CapSurface == lev)
+  df$Attribute[i] = "CapSurface"
+  df$Feature[i] = lev
+  df$Edible[i] = sum(mushrooms_filterd$Edible == "Edible")
+  df$Poisonous[i] = nrow(mushrooms_filterd) - df$Edible[i]
+  i = i + 1
+}
+for (lev in levels(mushrooms$CapColor)){
+  mushrooms_filterd = mushrooms %>% filter(CapColor == lev)
+  df$Attribute[i] = "CapColor"
+  df$Feature[i] = lev
+  df$Edible[i] = sum(mushrooms_filterd$Edible == "Edible")
+  df$Poisonous[i] = nrow(mushrooms_filterd) - df$Edible[i]
+  i = i + 1
+}
+for (lev in levels(mushrooms$Odor)){
+  mushrooms_filterd = mushrooms %>% filter(Odor == lev)
+  df$Attribute[i] = "Odor"
+  df$Feature[i] = lev
+  df$Edible[i] = sum(mushrooms_filterd$Edible == "Edible")
+  df$Poisonous[i] = nrow(mushrooms_filterd) - df$Edible[i]
+  i = i + 1
+}
+for (lev in levels(mushrooms$Height)){
+  mushrooms_filterd = mushrooms %>% filter(Height == lev)
+  df$Attribute[i] = "Height"
+  df$Feature[i] = lev
+  df$Edible[i] = sum(mushrooms_filterd$Edible == "Edible")
+  df$Poisonous[i] = nrow(mushrooms_filterd) - df$Edible[i]
+  i = i + 1
+}
+
+brks <- c(0, 0.25, 0.5, 0.75, 1)
+theme = theme_minimal() + theme(axis.text.x = element_text(size = 5, angle = 90))
+
+df.long<-melt(df)
+q1 = ggplot(data = df.long %>% filter(Attribute == "CapShape"), 
+            aes(Feature, value, fill = variable)) +
+  geom_bar(stat = "identity", position = "fill", show.legend = FALSE) + 
+  xlab("Type of cap shape") + ylab("Percent") +
+  scale_y_continuous(breaks = brks, labels = scales::percent(brks)) +
+  scale_fill_manual(values=c('#00d10a','#ffea00')) + theme
+
+q2 = ggplot(data = df.long %>% filter(Attribute == "CapSurface"), 
+            aes(Feature, value, fill = variable)) +
+  geom_bar(stat = "identity", position = "fill", show.legend = FALSE) + 
+  xlab("Type of cap surface") + ylab("Percent") +
+  scale_y_continuous(breaks = brks, labels = scales::percent(brks)) +
+  scale_fill_manual(values=c('#00d10a','#ffea00')) + theme
+
+q3 = ggplot(data = df.long %>% filter(Attribute == "CapColor"), 
+            aes(Feature, value, fill = variable)) +
+  geom_bar(stat = "identity", position = "fill", show.legend = FALSE) + 
+  xlab("Type of cap colour") + ylab("Percent") +
+  scale_y_continuous(breaks = brks, labels = scales::percent(brks)) +
+  scale_fill_manual(values=c('#00d10a','#ffea00')) + theme
+
+q4 = ggplot(data = df.long %>% filter(Attribute == "Odor"), 
+            aes(Feature, value, fill = variable)) +
+  geom_bar(stat = "identity", position = "fill", show.legend = FALSE) + 
+  xlab("Type of odor") + ylab("Percent") +
+  scale_y_continuous(breaks = brks, labels = scales::percent(brks)) +
+  scale_fill_manual(values=c('#00d10a','#ffea00')) + theme
+
+q5 = ggplot(data = df.long %>% filter(Attribute == "Height"), 
+            aes(Feature, value, fill = variable)) +
+  geom_bar(stat = "identity", position = "fill") + 
+  xlab("Type of height") + ylab("Percent") + labs(fill = "Edibility") +
+  scale_y_continuous(breaks = brks, labels = scales::percent(brks)) +
+  scale_fill_manual(labels=c("Edible", "Poisonous"), values=c('#00d10a','#ffea00')) + theme
+
+leg <- get_legend(q5)
+q5 = q5 + theme(legend.position = "none")
+
+grid.arrange(q1, q2, q3, q4, q5, as_ggplot(leg), ncol = 2, nrow = 3)
+
+```
+
+When we see the percentages of each variable, we can easily see that the best attribute for predicting the edibility is the odour because all types of smell are directly related to it. The cap attributes can also be useful as for some types, the mushrooms are either edible or poisonous; however, we would have to find relationships between other variables. Finally, the height of the mushroom is not useful at first glance because the edibility is around 50% for both types of height.
+
+\newpage
+
+## Task
+
+**Definition**: Random Forest is an ensemble of *decision trees* exploiting collective wisdom to generate very accurate predictions. It uses bootstrapping to create different samples from the original data to create different decision tree models and finally compute the average over the predictions of all trees when making predictions.
+
+In our scenario, the two possible outcomes are “Edible” or “Poisonous”.
+
+#### 1. Fit Random Forest models using each possible input on its own to predict edibility. Evaluate the quality of fit by using the predict function to calculate the *predicted* class for each mushroom (edible or poisonous) (hint, you need type=’response’). Which input fits best? (i.e. which classifies the most mushrooms correctly?)\
+
+In order to create the model, we use the **randomForest** command, which has a similar way of work to the **glm** command used for regression models. We need to specify the dataset to use and the formula specifying the inputs and outputs. There are other optional parameters such as *ntree* and *mtry* that set the number of trees within the forest and the number of variables randomly sampled as candidates at each split, respectively. However, we will keep the default values as they provide good performance.
+
+We must use different formulas for creating a model for each variable:
+
+$$Edible \sim CapShape$$
+$$Edible \sim CapSurface$$
+$$Edible \sim CapColor$$
+$$Edible \sim Odor$$
+$$Edible \sim Height$$
+
+The variable *mushrooms* will be used for the second parameter, *data*.
+
+```{r}
+# Set seed
+set.seed(100)
+
+# Random forest
+mushrooms_forest_shape = randomForest(Edible ~ CapShape, data=mushrooms)
+mushrooms_forest_surface = randomForest(Edible ~ CapSurface, data=mushrooms)
+mushrooms_forest_color = randomForest(Edible ~ CapColor, data=mushrooms)
+mushrooms_forest_odor = randomForest(Edible ~ Odor, data=mushrooms)
+mushrooms_forest_height = randomForest(Edible ~ Height, data=mushrooms)
+```
+ 
+To evaluate and compare the quality of the fit of each model, we now perform the function **predict** for each formula created previously. In this case, we use have to set the parameters *newdata* with the mushrrooms set, which is new for the models, and the *type* as "response", which will make the function to return the result of the prediction as Edible or Poisonous.
+
+Once we obtained the predictions, we compare them computing the accuracy for each model:
+
+$$\textrm{Accuracy} =\frac{\textrm{Correctly predicted}}{\textrm{Total}}$$
+ 
+```{r}
+# Prediction
+predictive_accuracy = rep(NA, 5)
+predictive_accuracy[1] = sum(predict(mushrooms_forest_shape, newdata = mushrooms, 
+                                     type = "response") == mushrooms$Edible) / nrow(mushrooms) *100
+predictive_accuracy[2] = sum(predict(mushrooms_forest_surface, newdata = mushrooms, 
+                                     type = "response") == mushrooms$Edible) / nrow(mushrooms) *100
+predictive_accuracy[3] = sum(predict(mushrooms_forest_color, newdata = mushrooms, 
+                                     type = "response") == mushrooms$Edible) / nrow(mushrooms) *100
+predictive_accuracy[4] = sum(predict(mushrooms_forest_odor, newdata = mushrooms, 
+                                     type = "response") == mushrooms$Edible) / nrow(mushrooms) *100
+predictive_accuracy[5] = sum(predict(mushrooms_forest_height, newdata = mushrooms, 
+                                     type = "response") == mushrooms$Edible) / nrow(mushrooms) *100
+
+# Show
+df <- data.frame(
+  models = c('Shape', 'Surface', 'Color', 'Odor', 'Heigh'),
+  accuracy=predictive_accuracy
+)
+
+ggplot(df, aes(x = models, y = accuracy)) + 
+  geom_dotplot(binaxis='y', stackdir='center', binwidth = 1) +
+  geom_text(aes(label = format(accuracy, digits = 5)), hjust = 0.5,  vjust = 1.6, size = 3.5) +
+  xlab("Model Inputs") +
+  ylab("Prediction accuracy") +
+  labs(caption = "Accuracy for each model.") +
+  theme_minimal()
+```
+
+The results conclude that the Odor input is the variable that fits best because it classifies the Edibility by `r format(predictive_accuracy[4], digits = 5)`% while the other inputs do not reach 60 percent. The colour classifies better with almost 60%, the shape and the surface are quite similar, and the height is a almost useless input because it predicts with an accuracy close to 50%.
+
+These results were expected as in the Introduction we analysed the different inputs and saw that the Odour could predict perfectly the Edibility while the other would probably need to find relationships between them.
+
+#### 2. Using cross-validation, perform a model selection to determine which features are useful for making predictions using a Random Forest. As above, use the number of mushrooms correctly classified as the criterion for deciding which model is best. You might try to find a way to loop over all 32 possible models (ignore the possibility of no input variables. Hint: you can use allCombs in the dagR package to generate all combinations of the numbers 1 to n). Or select features ‘greedily’, by picking one at a time to add to the model. Present your results in the most convincing way you can.\
+
+To perform the model selection as well to determine the features more useful for the Random Forest, we use a combination of cross-validation and greedy selection. 
+
+The cross-validation is done by splitting the original set into two sets, the train set, and the test set, and using the first set for creating the model and the second set for testing it. Therefore, we split the data by 75% and 25% for training and testing, respectively, and then create the models for all 31 combinations of models (using five inputs and removing ignoring the case without any input).
+
+However, the usage of cross-validation to select a model does not guarantee that we will identify the best model because there is a possibility that a different model predicts better on a data set. In order to make the method more robust, we repeated the process a hundred times choosing a new split of data each time. For each iteration, we saved the name of the best model and also computed the accuracy for all models with the test set, so we can calculate an average accuracy.
+
+Once we obtain the average accuracy for each model, we will perform the feature selection greedily. In other words, we will identify the best accuracy with one input, then find the best accuracy of the two-input model using the first input. This process is repeated until it reaches the five-input model.
+
+```{r}
+calculateCombRandomForestAccuracy = function(combinations, models, train_data, test_data) {
+
+  df <- data.frame(
+    input = vector(length = (nrow(combinations) - 1)),
+    count = vector(length = (nrow(combinations) - 1)),
+    accuracy = vector(length = (nrow(combinations) - 1))
+  )
+  
+  for(i in 2:nrow(combinations)) {
+    row <- combinations[i,]
+    formula = paste("Edible ~", models[row[1]])  
+    for(j in 2:length(row)){
+      if (!is.na(row[j]))
+      formula = paste(formula, models[row[j]], sep = " + ")  
+    }
+    
+    data_forest_loop = randomForest(formula(formula), data=train_data)
+    
+    df$input[i-1] = sub(".*~ ", "", formula)
+    df$count[i-1] = sum(predict(data_forest_loop, newdata = test_data, type = "response") 
+                        == test_data$Edible)
+    df$accuracy[i-1] = df$count[i-1] / nrow(test_data) *100
+  }
+
+  return(df)
+}
+```
+
+```{r eval=FALSE}
+combinations = allCombs(1:5)
+models = c('CapShape', 'CapSurface', 'CapColor', 'Odor', 'Height')
+
+n_rep = 100
+model_names = rep(NA, n_rep)
+winners = rep(NA, n_rep)
+avg_accuracy = rep(0, nrow(combinations) - 1)
+
+for (iteration in 1:n_rep){
+  train_idx = sample(dim(mushrooms)[1], round(nrow(mushrooms)*0.75))
+  train_data = mushrooms[train_idx, ]
+  test_data = mushrooms[-train_idx, ]
+  
+  df = calculateCombRandomForestAccuracy(combinations, models, train_data, test_data)
+  winners[iteration] = df$input[which.max(df$count)]
+  avg_accuracy = avg_accuracy + (df$accuracy / n_rep) 
+}
+model_names = df$input
+
+df <- data.frame(
+  winners = winners
+)
+
+ggplot(data=df, aes(x = winners)) +
+  geom_bar(fill="steelblue") +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.75, color = "black", size = 3.5) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10)) +
+  xlab("Model Inputs") +
+  ylab("Count") +
+  labs(caption = "Number of times that each model performed best.") +
+  theme_minimal()
+
+indexes = which(model_names %in% winners)
+df <- data.frame(
+  input = model_names[indexes],
+  avg_accuracy = avg_accuracy[indexes]
+)
+df = df[order(-df$avg_accuracy),]
+
+kable(df, col.names = c("Input", "Average Accuracy"), caption = "Average accuracy for best models.")
+```
+
+```{r echo=FALSE}
+df = readRDS(df, file = "winners.RDS") 
+ggplot(data=df, aes(x = winners)) +
+  geom_bar(fill="steelblue") +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.75, color = "black", size = 3.5) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10)) +
+  xlab("Model Inputs") +
+  ylab("Count") +
+  labs(caption = "Number of times that each model performed best.") +
+  theme_minimal()
+df = readRDS(df, file = "table_1.RDS") 
+kable(df, col.names = c("Input", "Average Accuracy"), caption = "Average accuracy for best models.")
+```
+
+In order to make the method more robust, we repeated the process two hundred times choosing a new split of data each time. For each iteration, we saved the name of the best model and also computed the accuracy for all models with the test set, so we can calculate an average accuracy.
+
+From the bar graph, we can see that the model the best model is the one using all variables except the height because it was the best accuracy in almost every iteration. From table 2, we see that the average accuracy for these models is quite similar providing values greater than 98.5% in all cases.
+
+```{r eval=FALSE}
+df <- data.frame(
+  input = model_names,
+  avg_accuracy = avg_accuracy
+)
+
+df_1 = df %>% filter(str_count(input, "\\+") == 0) %>% arrange(desc(avg_accuracy))
+input_1 = as.character(df_1$input[which.max(df_1$avg_accuracy)])
+df_2 = df %>% filter(str_count(input, "\\+") == 1 & str_count(input, input_1) == 1) 
+%>% arrange(desc(avg_accuracy))
+input_2 = as.character(df_2$input[which.max(df_2$avg_accuracy)])
+input_2 = str_trim(str_remove_all(str_remove(input_2, input_1), "\\+"))
+df_3 = df %>% filter(str_count(input, "\\+") == 2 & str_count(input, input_1) == 1 
+                     & str_count(input, input_2) == 1) %>% arrange(desc(avg_accuracy))
+input_3 = as.character(df_3$input[which.max(df_3$avg_accuracy)])
+input_3 = str_trim(str_remove_all(str_remove(str_remove(input_3, input_1), input_2), "\\+"))
+df_4 = df %>% filter(str_count(input, "\\+") == 3 & str_count(input,input_1)==1 & 
+                       str_count(input,input_2)==1 & str_count(input,input_3)==1) 
+          %>% arrange(desc(avg_accuracy))
+input_4 = as.character(df_4$input[which.max(df_4$avg_accuracy)])
+input_4 = str_trim(str_remove_all(str_remove(str_remove(str_remove(input_4, input_1), 
+                                                        input_2), input_3), "\\+"))
+```
+
+```{r echo=FALSE}
+df = readRDS(df, file = "table_2.RDS") 
+df_1 = df %>% filter(str_count(input, "\\+") == 0) %>% arrange(desc(avg_accuracy))
+input_1 = as.character(df_1$input[which.max(df_1$avg_accuracy)])
+df_2 = df %>% filter(str_count(input, "\\+") == 1 & str_count(input, input_1) == 1) %>% arrange(desc(avg_accuracy))
+input_2 = as.character(df_2$input[which.max(df_2$avg_accuracy)])
+input_2 = str_trim(str_remove_all(str_remove(input_2, input_1), "\\+"))
+df_3 = df %>% filter(str_count(input, "\\+") == 2 & str_count(input, input_1) == 1 & str_count(input, input_2) == 1) %>% arrange(desc(avg_accuracy))
+input_3 = as.character(df_3$input[which.max(df_3$avg_accuracy)])
+input_3 = str_trim(str_remove_all(str_remove(str_remove(input_3, input_1), input_2), "\\+"))
+df_4 = df %>% filter(str_count(input, "\\+") == 3 & str_count(input,input_1)==1 & str_count(input,input_2)==1 & str_count(input,input_3)==1) %>% arrange(desc(avg_accuracy))
+input_4 = as.character(df_4$input[which.max(df_4$avg_accuracy)])
+input_4 = str_trim(str_remove_all(str_remove(str_remove(str_remove(input_4, input_1), input_2), input_3), "\\+"))
+kable(df_1, col.names = c("Input", "Average Accuracy"), caption = "Average accuracy of one-input models.")
+kable(df_2, col.names = c("Input", "Average Accuracy"), caption = "Average accuracy of two-input models.")
+kable(df_3, col.names = c("Input", "Average Accuracy"), caption = "Average accuracy of three-input models.")
+kable(df_4, col.names = c("Input", "Average Accuracy"), caption = "Average accuracy of four-input models.")
+kable(df %>% filter(str_count(input, "\\+") == 4), col.names = c("Input", "Average Accuracy"), caption = "Average accuracy of five-input models.")
+```
+
+From the 5 tables above, we conclude the following feature importance order:
+
+-	Odor: this was the result expected as we have seen in the introduction and the previous sections.
+-	CapColor: it increases the average accuracy of the model.
+-	CapShape: this feature also improves the average accuracy.
+-	CapSurface: it helps to increase the average to 99.203%.
+-	Height: this feature slighlty decreases the average accuracy of the model by approximately 0.002%; therefore, we should not include this in our model.
+
+\newpage
+#### 3. Would you use this classifier if you were foraging for mushrooms? Discuss with reference to factors that you identified as important and the probability of posioning yourself.\
+
+The only model that we would use is the one that would not predict a poisonous mushroom as edible. To check this, we will use the model with the best performance from the previous section. The model with the best performance was the one using all inputs except the height and as it was not saved, we will create a new model.
+
+On the other hand, we have been determining the best model according to the accuracy, which does not differentiate between the errors of predicting an Edible or a Poisonous wrongly. However, in this scenario, this difference is quite important as failing to predict correctly an edible mushroom (predicting that it is poisonous) is not dangerous but the opposite could kill someone. Therefore, to decide whether we would use this classifier or not, we will compute the confusion matrix and then the precision, which indicates the proportion of the correctly predicted Edible mushrooms out of the total predicted Edible.
+
+```{r echo=FALSE}
+df <- data.frame(
+  Categ = c("Class 1", "Class 2"),
+  Edib = c("True Positive", "False Positive"),
+  Pois = c("False Negative", "True Negative")
+)
+kable(df, col.names = c("Actual \\ Predicted", "Class 1", "Class 2"), caption = "Confusion matrix.")
+```
+
+$$\textrm{Precision} =\frac{\textrm{True Positives}}{\textrm{True Positives + False Positives}}$$
+
+```{r echo=FALSE}
+train_idx = sample(dim(mushrooms)[1], round(nrow(mushrooms)*0.75))
+train_data = mushrooms[train_idx, ]
+test_data = mushrooms[-train_idx, ]
+```
+
+```{r}
+mushrooms_forest = randomForest(Edible ~ CapShape + CapSurface + CapColor + Odor, data=train_data)
+
+tmp_set = test_data %>% filter(Edible=="Edible")
+tp = sum(predict(mushrooms_forest, newdata = tmp_set, type = "response") == tmp_set$Edible)
+fn = nrow(tmp_set) - tp
+tmp_set = test_data %>% filter(Edible=="Poisonous")
+tn = sum(predict(mushrooms_forest, newdata = tmp_set, type = "response") == tmp_set$Edible)
+fp = nrow(tmp_set) - tn
+df <- data.frame(
+  Categ = c("Edible", "Poisonous"),
+  Edib = c(tp, fp),
+  Pois = c(fn, tn)
+)
+kable(df, col.names = c("Actual \\ Predicted", "Edible", "Poisonous"), caption = "Confusion matrix for best model.")
+
+precision = tp / (tp + fp)
+prob = 1 - precision
+print(precision)
+```
+
+With the test set, we see how things could have been in a real scenario using this model. We obtained a precision of `r format(precision, digits = 5)`% which gives us a probability of eating a poisonous mushroom of `r format(1-precision, digits = 5)`%. Although theoretically, it is a good result as it is not 100% secure, we would be reluctant to use it.
+
+However, someone would like to use it but there are other significant factors such as the difficulty of choosing the colour or some shapes, for example, if we find a whitish-grey mushroom, what should we consider it? White or grey? Therefore, even when we do not recommend the usage of this model, we should have enough information to help to solve these issues.
+
+In addition, we may think that adding the feature 'Height' would increase the precision; therefore, we repeated the same process but with the model with all inputs.
+
+```{r}
+mushrooms_forest = randomForest(Edible ~ CapShape + CapSurface + CapColor + Odor + Height, data=train_data)
+
+tmp_set = test_data %>% filter(Edible=="Edible")
+tp = sum(predict(mushrooms_forest, newdata = tmp_set, type = "response") == tmp_set$Edible)
+fn = nrow(tmp_set) - tp
+tmp_set = test_data %>% filter(Edible=="Poisonous")
+tn = sum(predict(mushrooms_forest, newdata = tmp_set, type = "response") == tmp_set$Edible)
+fp = nrow(tmp_set) - tn
+df <- data.frame(
+  Categ = c("Edible", "Poisonous"),
+  Edib = c(tp, fp),
+  Pois = c(fn, tn)
+)
+kable(df, col.names = c("Actual \\ Predicted", "Edible", "Poisonous"), caption = "Confusion matrix for five-input model.")
+
+precision = tp / (tp + fp)
+prob = 1 - precision
+print(precision)
+```
+
+As we can see, the accuracy has been decreased with respect to the previous model, so we reasserted that the choice of the best model was correct and that we would need more features from the mushrooms in order to improve our model and be able to use it in a real scenario.
+
+\newpage
+## References
+
+[1] *UCI*. Mushroom Data Set - UCI Machine Learning Repository. [Online]. [Accessed 07 May 2020]. Available from:
+https://archive.ics.uci.edu/ml/datasets/Mushroom
+
+
+
